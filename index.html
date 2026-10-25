@@ -651,23 +651,34 @@
                 let caption = "";
                 let lastError = null;
                 
-                for (let i = 0; i < modelsToTry.length; i++) {
-                    const model = modelsToTry[i];
-                    setStatus(`🤖 กำลังลอง model ${i + 1}/${modelsToTry.length}: ${model}...`);
-                    try {
-                        caption = await callGemini(apiKey, model, promptText, base64Image, mimeType);
-                        if (caption) {
-                            try { localStorage.setItem(MODEL_STORAGE, model); } catch (e) {}
-                            break;
+                const MAX_ROUNDS = 3;
+                for (let round = 1; round <= MAX_ROUNDS && !caption; round++) {
+                    let overloaded = false;
+                    for (let i = 0; i < modelsToTry.length; i++) {
+                        const model = modelsToTry[i];
+                        setStatus(`🤖 กำลังลอง model ${i + 1}/${modelsToTry.length}: ${model}... (รอบ ${round}/${MAX_ROUNDS})`);
+                        try {
+                            caption = await callGemini(apiKey, model, promptText, base64Image, mimeType);
+                            if (caption) {
+                                try { localStorage.setItem(MODEL_STORAGE, model); } catch (e) {}
+                                break;
+                            }
+                        } catch (err) {
+                            lastError = err;
+                            console.error(`Model ${model} failed:`, err.status, err.message);
+                            // 404 = model ไม่มี, 429 = โควต้าหมด, 500/503 = Google ผู้ใช้เยอะ → ลองตัวถัดไป
+                            if (err.status === 429) {
+                                try { localStorage.removeItem(MODEL_STORAGE); } catch (e) {}
+                            }
+                            if (err.status === 500 || err.status === 503) overloaded = true;
+                            if (![404, 429, 500, 503].includes(err.status)) throw err;
                         }
-                    } catch (err) {
-                        lastError = err;
-                        console.error(`Model ${model} failed:`, err.status, err.message);
-                        // 404 = model ไม่มี, 429 = โควต้า model นี้หมด → ลองตัวถัดไป
-                        if (err.status === 429) {
-                            try { localStorage.removeItem(MODEL_STORAGE); } catch (e) {}
-                        }
-                        if (err.status !== 404 && err.status !== 429) throw err;
+                    }
+                    if (!caption && overloaded && round < MAX_ROUNDS) {
+                        setStatus("⏳ Google ผู้ใช้เยอะ รอ 5 วินาทีแล้วลองใหม่...");
+                        await new Promise(r => setTimeout(r, 5000));
+                    } else if (!caption) {
+                        break;
                     }
                 }
 
